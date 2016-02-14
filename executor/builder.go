@@ -60,6 +60,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildHaving(v)
 	case *plan.IndexScan:
 		return b.buildIndexScan(v)
+	case *plan.Insert:
+		return b.buildInsert(v)
 	case *plan.JoinInner:
 		return b.buildJoinInner(v)
 	case *plan.JoinOuter:
@@ -294,4 +296,21 @@ func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	selExec := b.build(v.SelectPlan)
 	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
+}
+
+func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
+	insert := &InsertExec{
+		ctx:         b.ctx,
+		Table:       v.Table,
+		Columns:     v.Columns,
+		Lists:       v.Lists,
+		Setlist:     v.Setlist,
+		OnDuplicate: v.OnDuplicate,
+		IsReplace:   v.IsReplace,
+		Priority:    v.Priority,
+	}
+	if v.SelectPlan != nil {
+		insert.SelectExec = b.build(v.SelectPlan)
+	}
+	return insert
 }

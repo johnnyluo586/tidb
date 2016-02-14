@@ -29,6 +29,7 @@ import (
 
 var (
 	_ Executor = &UpdateExec{}
+	_ Executor = &InsertExec{}
 )
 
 // UpdateExec represents an update executor.
@@ -233,4 +234,49 @@ func (e *UpdateExec) Fields() []*ast.ResultField {
 // Close implements Executor Close interface.
 func (e *UpdateExec) Close() error {
 	return e.SelectExec.Close()
+}
+
+// InsertExec represents an insert executor.
+type InsertExec struct {
+	ctx        context.Context
+	SelectExec Executor
+
+	Table       *ast.TableRefsClause
+	Columns     []*ast.ColumnName
+	Lists       [][]ast.ExprNode
+	Setlist     []*ast.Assignment
+	OnDuplicate []*ast.Assignment
+
+	IsReplace bool
+	Priority  int
+}
+
+// Next implements Executor Next interface.
+func (e *InsertExec) Next() (*Row, error) {
+	// Get Table
+	ts, ok := e.TableRefs.Left(*ast.TableSource)
+	if !ok {
+		return nil, errors.Errorf("Can not get table")
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		return nil, errors.Errorf("Can not get table")
+	}
+	tableInfo := tn.TableInfo
+
+	return nil, nil
+}
+
+// Fields implements Executor Fields interface.
+// Returns nil to indicate there is no output.
+func (e *InsertExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements Executor Close interface.
+func (e *InsertExec) Close() error {
+	if e.SelectExec != nil {
+		return e.SelectExec.Close()
+	}
+	return nil
 }

@@ -492,3 +492,36 @@ func (p *Filter) SetLimit(limit float64) {
 	// We assume 50% of the src row is filtered out.
 	p.src.SetLimit(limit * 2)
 }
+
+// Update represents an update plan.
+type Insert struct {
+	basePlan
+
+	Table       *ast.TableRefsClause
+	Columns     []*ast.ColumnName
+	Lists       [][]ast.ExprNode
+	Setlist     []*ast.Assignment
+	OnDuplicate []*ast.Assignment
+	SelectPlan  Plan
+
+	IsReplace bool
+	Priority  int
+}
+
+// Accept implements Plan Accept interface.
+func (p *Insert) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Insert)
+	if p.SelectPlan != nil {
+		var ok bool
+		p.SelectPlan, ok = p.SelectPlan.Accept(v)
+		if !ok {
+			return p, false
+		}
+	}
+	// TODO: should we visit other nodes?
+	return v.Leave(p)
+}

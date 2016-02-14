@@ -61,6 +61,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return &Deallocate{Name: x.Name}
 	case *ast.ExecuteStmt:
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+	case *ast.InsertStmt:
+		return b.buildInsert(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
@@ -692,4 +694,23 @@ func columnOffsetInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, e
 		return -1, errors.Errorf("column %s not found", cn.Name.O)
 	}
 	return offset, nil
+}
+
+func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
+	insertPlan := &Insert{
+		Table:       insert.Table,
+		Columns:     insert.Columns,
+		Lists:       insert.Lists,
+		Setlist:     insert.Setlist,
+		OnDuplicate: insert.OnDuplicate,
+		IsReplace:   insert.Replace,
+		Priority:    insert.Priority,
+	}
+	if insert.Select != nil {
+		insertPlan.SelectPlan = b.build(insert.Select)
+		if b.err != nil {
+			return nil
+		}
+	}
+	return insertPlan
 }
