@@ -352,8 +352,8 @@ func (e *InsertExec) getColumns(tableCols []*column.Col) ([]*column.Col, error) 
 	} else {
 		// Process `name` type column.
 		columns := make([]string, 0, len(e.Columns))
-		for _, v := range e.Setlist {
-			columns = append(columns, v.Column.Name.O)
+		for _, v := range e.Columns {
+			columns = append(columns, v.Name.O)
 		}
 		cols, err = column.FindCols(tableCols, columns)
 		if err != nil {
@@ -460,7 +460,7 @@ func (e *InsertExec) getRowsSelect(cols []*column.Col) ([][]interface{}, error) 
 	if len(e.SelectExec.Fields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
 	}
-	rows := make([][]interface{}, 0)
+	var rows [][]interface{}
 	for {
 		innerRow, err := e.SelectExec.Next()
 		if err != nil {
@@ -563,10 +563,10 @@ func (e *InsertExec) onDuplicateUpdate(row []interface{}, h int64, cols map[int]
 		}*/
 	// Evalue assignment here
 	newData := make([]interface{}, len(data))
-	for i, _ := range row {
+	for i, c := range row {
 		asgn, ok := cols[i]
 		if !ok {
-			newData[i] = row[i]
+			newData[i] = c
 			continue
 		}
 		newData[i], err = evaluator.Eval(e.ctx, asgn.Expr)

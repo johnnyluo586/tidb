@@ -493,7 +493,7 @@ func (p *Filter) SetLimit(limit float64) {
 	p.src.SetLimit(limit * 2)
 }
 
-// Update represents an update plan.
+// Insert represents an insert plan.
 type Insert struct {
 	basePlan
 

@@ -77,6 +77,12 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if x.Distinct {
 			c.unsupported = true
 		}
+	case *ast.InsertStmt:
+		if x.IsReplace {
+			c.unsupported = true
+		}
+	case *ast.UnionStmt:
+		c.unsupported = true
 	}
 	return in, c.unsupported
 }
