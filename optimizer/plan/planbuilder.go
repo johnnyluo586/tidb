@@ -703,7 +703,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		Lists:       insert.Lists,
 		Setlist:     insert.Setlist,
 		OnDuplicate: insert.OnDuplicate,
-		IsReplace:   insert.Replace,
+		IsReplace:   insert.IsReplace,
 		Priority:    insert.Priority,
 	}
 	if insert.Select != nil {

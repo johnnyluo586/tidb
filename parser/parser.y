@@ -1831,7 +1831,7 @@ ReplaceIntoStmt:
 	"REPLACE" ReplacePriority IntoOpt TableName InsertValues
 	{
 		x := $5.(*ast.InsertStmt)
-		x.Replace = true
+		x.IsReplace = true
 		x.Priority = $2.(int)
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}

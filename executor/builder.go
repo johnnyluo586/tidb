@@ -16,6 +16,7 @@ package executor
 import (
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -301,7 +302,6 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	insert := &InsertExec{
 		ctx:         b.ctx,
-		Table:       v.Table,
 		Columns:     v.Columns,
 		Lists:       v.Lists,
 		Setlist:     v.Setlist,
@@ -312,5 +312,23 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	if v.SelectPlan != nil {
 		insert.SelectExec = b.build(v.SelectPlan)
 	}
+	// Get Table
+	ts, ok := v.Table.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		b.err = errors.Errorf("Can not get table")
+		return nil
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		b.err = errors.Errorf("Can not get table")
+		return nil
+	}
+	tableInfo := tn.TableInfo
+	tbl, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can not get table")
+		return nil
+	}
+	insert.Table = tbl
 	return insert
 }
