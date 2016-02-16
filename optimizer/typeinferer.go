@@ -181,8 +181,10 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 			x.Type = types.NewFieldType(xTp)
 		}
 	}
-	x.Type.Charset = charset.CharsetBin
-	x.Type.Collate = charset.CollationBin
+	if x.Type != nil {
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
+	}
 }
 
 func mergeArithType(a, b byte) byte {

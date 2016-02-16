@@ -426,8 +426,7 @@ func (e *InsertExec) getRows(cols []*column.Col) (rows [][]interface{}, err erro
 		return nil, errors.Trace(err)
 	}
 
-	//evalMap, err := e.getColumnDefaultValues(e.Table.Cols())
-	_, err = e.getColumnDefaultValues(e.Table.Cols())
+	defaultVals, err := e.getColumnDefaultValues(e.Table.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -439,12 +438,25 @@ func (e *InsertExec) getRows(cols []*column.Col) (rows [][]interface{}, err erro
 		}
 		vals := make([]interface{}, len(list))
 		for j, expr := range list {
-			vals[j], err = evaluator.Eval(e.ctx, expr)
-			// TODO: handle default value
-			// For "insert into t values (default)" Default Eval.
-			//evalMap[expression.ExprEvalDefaultName] = cols[j].Name.O
-			if err != nil {
-				return nil, errors.Trace(err)
+			if d, ok := expr.(*ast.DefaultExpr); ok {
+				cn := d.Name
+				if cn != nil {
+					var found bool
+					vals[j], found = defaultVals[cn.Name.L]
+					if !found {
+						return nil, errors.Errorf("default column not found - %s", cn.Name.O)
+					}
+				} else {
+					vals[j] = defaultVals[cols[j].Name.L]
+				}
+			} else {
+				vals[j], err = evaluator.Eval(e.ctx, expr)
+				// TODO: handle default value
+				// For "insert into t values (default)" Default Eval.
+				//evalMap[expression.ExprEvalDefaultName] = cols[j].Name.O
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 		}
 		rows[i], err = e.fillRowData(cols, vals)
