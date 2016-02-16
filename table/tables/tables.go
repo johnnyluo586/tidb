@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -862,4 +864,6 @@ func DecodeRecordKeyHandle(key kv.Key) (int64, error) {
 
 func init() {
 	table.TableFromMeta = TableFromMeta
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	store, _ = driver.Open("TiDBMemoryTable")
 }
