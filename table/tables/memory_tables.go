@@ -51,6 +51,7 @@ type MemoryTable struct {
 	meta         *model.TableInfo
 
 	store kv.Storage
+	rows  [][]interface{}
 }
 
 // MemoryTableFromMeta creates a Table instance from model.TableInfo.
@@ -79,8 +80,15 @@ func newMemoryTable(tableID int64, tableName string, cols []*column.Col, alloc a
 	return t
 }
 
-func (t *MemoryTable) GetTxn(ctx context.Context, forceNew bool) (kv.Transaction, error) {
-	return t.store.Begin()
+// Seek seeks the handle
+func (t *MemoryTable) Seek(ctx context.Context, handle int64) (kv.Iterator, error) {
+	seekKey := EncodeRecordKey(t.TableID(), handle, 0)
+	txn, err := t.store.Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	iter, err := txn.Seek(seekKey)
+	return iter, errors.Trace(err)
 }
 
 // TableID implements table.Table TableID interface.

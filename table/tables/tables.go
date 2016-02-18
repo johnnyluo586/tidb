@@ -111,8 +111,14 @@ func newTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	return t
 }
 
-func (t *Table) GetTxn(ctx context.Context, forceNew bool) (kv.Transaction, error) {
-	return ctx.GetTxn(forceNew)
+func (t *Table) Seek(ctx context.Context, handle int64) (kv.Iterator, error) {
+	seekKey := EncodeRecordKey(t.TableID(), handle, 0)
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	iter, err := txn.Seek(seekKey)
+	return iter, errors.Trace(err)
 }
 
 // TableID implements table.Table TableID interface.
