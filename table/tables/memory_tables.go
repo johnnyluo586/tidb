@@ -25,17 +25,12 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var store kv.Storage
@@ -50,8 +45,8 @@ type MemoryTable struct {
 	alloc        autoid.Allocator
 	meta         *model.TableInfo
 
-	store kv.Storage
-	rows  [][]interface{}
+	//store kv.Storage
+	rows [][]interface{}
 }
 
 // MemoryTableFromMeta creates a Table instance from model.TableInfo.
@@ -74,21 +69,60 @@ func newMemoryTable(tableID int64, tableName string, cols []*column.Col, alloc a
 		Name:         name,
 		alloc:        alloc,
 		Columns:      cols,
-		store:        store,
 		recordPrefix: genTableRecordPrefix(tableID),
+		rows:         [][]interface{}{},
 	}
 	return t
 }
 
+type iterator struct {
+	rows   [][]interface{}
+	cursor int
+	tid    int64
+}
+
+func (it *iterator) Valid() bool {
+	if it.cursor < 0 || it.cursor >= len(it.rows) {
+		return false
+	}
+	return true
+}
+
+func (it *iterator) Key() kv.Key {
+	return EncodeRecordKey(it.tid, int64(it.cursor), 0)
+}
+
+func (it *iterator) Value() []byte {
+	return nil
+}
+
+func (it *iterator) Next() error {
+	it.cursor++
+	return nil
+}
+
+func (it *iterator) Close() {
+	it.cursor = -1
+	return
+}
+
 // Seek seeks the handle
 func (t *MemoryTable) Seek(ctx context.Context, handle int64) (kv.Iterator, error) {
-	seekKey := EncodeRecordKey(t.TableID(), handle, 0)
-	txn, err := t.store.Begin()
-	if err != nil {
-		return nil, errors.Trace(err)
+	it := &iterator{
+		rows:   t.rows,
+		cursor: 0,
+		tid:    t.TableID(),
 	}
-	iter, err := txn.Seek(seekKey)
-	return iter, errors.Trace(err)
+	if handle < 0 {
+		handle = 0
+	}
+	if handle >= int64(len(t.rows)) {
+		it.cursor = -1
+		return it, nil
+	}
+	it.cursor = int(handle)
+
+	return it, nil
 }
 
 // TableID implements table.Table TableID interface.
@@ -208,143 +242,27 @@ func (t *MemoryTable) FindIndexByColName(name string) *column.IndexedCol {
 
 // Truncate implements table.Table Truncate interface.
 func (t *MemoryTable) Truncate(rm kv.RetrieverMutator) error {
-	txn, err := store.Begin()
-	err = util.DelKeyWithPrefix(txn, t.RecordPrefix())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn.Commit()
+	t.rows = [][]interface{}{}
 	return nil
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []interface{}, newData []interface{}, touched map[int]bool) error {
-	// We should check whether this table has on update column which state is write only.
-	currentData := make([]interface{}, len(t.Cols()))
-	copy(currentData, newData)
-
-	// If they are not set, and other data are changed, they will be updated by current timestamp too.
-	err := t.setOnUpdateData(ctx, touched, currentData)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	txn, err := t.store.Begin()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	bs := kv.NewBufferStore(txn)
-	defer bs.Release()
-
-	// set new value
-	if err = t.setNewData(bs, h, touched, currentData); err != nil {
-		return errors.Trace(err)
-	}
-
-	err = bs.SaveTo(txn)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = txn.Commit()
-	return nil
-}
-
-func (t *MemoryTable) setOnUpdateData(ctx context.Context, touched map[int]bool, data []interface{}) error {
-	ucols := column.FindOnUpdateCols(t.Cols())
-	for _, col := range ucols {
-		if !touched[col.Offset] {
-			value, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			data[col.Offset] = value
-			touched[col.Offset] = true
-		}
-	}
+	// Unsupport
 	return nil
 }
 
 // SetColValue implements table.Table SetColValue interface.
 func (t *MemoryTable) SetColValue(rm kv.RetrieverMutator, key []byte, data interface{}) error {
-	v, err := t.EncodeValue(data)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := rm.Set(key, v); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (t *MemoryTable) setNewData(rm kv.RetrieverMutator, h int64, touched map[int]bool, data []interface{}) error {
-	for _, col := range t.Cols() {
-		if !touched[col.Offset] {
-			continue
-		}
-
-		k := t.RecordKey(h, col)
-		if err := t.SetColValue(rm, k, data[col.Offset]); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	return nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *MemoryTable) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
-	var hasRecordID bool
-	for _, col := range t.Cols() {
-		if col.IsPKHandleColumn(t.meta) {
-			recordID, err = types.ToInt64(r[col.Offset])
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			hasRecordID = true
-			break
-		}
-	}
-	if !hasRecordID {
-		recordID, err = t.alloc.Alloc(t.ID)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-	//txn, err := ctx.GetTxn(false)
-	txn, err := t.store.Begin()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	bs := kv.NewBufferStore(txn)
-	defer bs.Release()
 
-	if err = t.LockRow(ctx, recordID); err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	// Set public and write only column value.
-	for _, col := range t.Cols() {
-		if col.IsPKHandleColumn(t.meta) {
-			continue
-		}
-		value := r[col.Offset]
-		key := t.RecordKey(recordID, col)
-		err = t.SetColValue(txn, key, value)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-	}
-	if err = bs.SaveTo(txn); err != nil {
-		return 0, errors.Trace(err)
-	}
-	if ctx != nil {
-		variable.GetSessionVars(ctx).AddAffectedRows(1)
-	}
-	txn.Commit()
-	return recordID, nil
+	recordID = int64(len(t.rows))
+	t.rows = append(t.rows, r)
+	return
 }
 
 // EncodeValue implements table.Table EncodeValue interface.
@@ -368,96 +286,40 @@ func (t *MemoryTable) DecodeValue(data []byte, col *column.Col) (interface{}, er
 
 // RowWithCols implements table.Table RowWithCols interface.
 func (t *MemoryTable) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error) {
-	retriever, _ = t.store.Begin()
+	if h >= int64(len(t.rows)) || h < 0 {
+		return nil, errors.New("Can not find the row")
+	}
+	row := t.rows[h]
+	if row == nil {
+		return nil, errors.New("Can not find row")
+	}
 	v := make([]interface{}, len(cols))
 	for i, col := range cols {
-		k := t.RecordKey(h, col)
-		data, err := retriever.Get(k)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		val, err := t.DecodeValue(data, col)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		v[i] = val
+		v[i] = row[col.Offset]
 	}
 	return v, nil
 }
 
 // Row implements table.Table Row interface.
 func (t *MemoryTable) Row(ctx context.Context, h int64) ([]interface{}, error) {
-	// TODO: we only interested in mentioned cols
-	//txn, err := ctx.GetTxn(false)
-	txn, err := store.Begin()
+	r, err := t.RowWithCols(nil, h, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	r, err := t.RowWithCols(txn, h, t.Cols())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	txn.Commit()
 	return r, nil
 }
 
 // LockRow implements table.Table LockRow interface.
 func (t *MemoryTable) LockRow(ctx context.Context, h int64) error {
-	//txn, err := ctx.GetTxn(false)
-	txn, err := t.store.Begin()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Get row lock key
-	lockKey := t.RecordKey(h, nil)
-	// set row lock key to current txn
-	err = txn.Set(lockKey, []byte(txn.String()))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn.Commit()
 	return nil
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []interface{}) error {
-	err := t.removeRowData(ctx, h)
-	if err != nil {
-		return errors.Trace(err)
+	if h >= int64(len(t.rows)) || h < 0 {
+		return errors.New("Can not find the row")
 	}
-	return nil
-}
-
-func (t *MemoryTable) removeRowData(ctx context.Context, h int64) error {
-	if err := t.LockRow(ctx, h); err != nil {
-		return errors.Trace(err)
-	}
-	//txn, err := ctx.GetTxn(false)
-	txn, err := store.Begin()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Remove row's colume one by one
-	for _, col := range t.Columns {
-		k := t.RecordKey(h, col)
-		err = txn.Delete([]byte(k))
-		if err != nil {
-			if col.State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
-				// If the column is not in public state, we may have not added the column,
-				// or already deleted the column, so skip ErrNotExist error.
-				continue
-			}
-
-			return errors.Trace(err)
-		}
-	}
-	// Remove row lock
-	err = txn.Delete([]byte(t.RecordKey(h, nil)))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn.Commit()
+	t.rows[h] = nil
 	return nil
 }
 
@@ -474,46 +336,6 @@ func (t *MemoryTable) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []i
 // IterRecords implements table.Table IterRecords interface.
 func (t *MemoryTable) IterRecords(retriever kv.Retriever, startKey kv.Key, cols []*column.Col,
 	fn table.RecordIterFunc) error {
-	var err error
-	retriever, err = store.Begin()
-	it, err := retriever.Seek(startKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
-
-	if !it.Valid() {
-		return nil
-	}
-
-	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
-
-	prefix := t.RecordPrefix()
-	for it.Valid() && it.Key().HasPrefix(prefix) {
-		// first kv pair is row lock information.
-		// TODO: check valid lock
-		// get row handle
-		handle, err := DecodeRecordKeyHandle(it.Key())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		data, err := t.RowWithCols(retriever, handle, cols)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		more, err := fn(handle, data, cols)
-		if !more || err != nil {
-			return errors.Trace(err)
-		}
-
-		rk := t.RecordKey(handle, nil)
-		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	return nil
 }
 

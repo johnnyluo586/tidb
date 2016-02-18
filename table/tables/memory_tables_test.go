@@ -87,18 +87,16 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 
 	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"})
 	c.Assert(err, IsNil)
-	c.Assert(rid, Greater, int64(0))
+	c.Assert(rid, Equals, int64(0))
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
-	c.Assert(row[0], Equals, int64(1))
+	c.Assert(row[0], Equals, 1)
 
 	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"})
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"})
 	c.Assert(err, IsNil)
-
-	c.Assert(tb.UpdateRecord(ctx, rid, []interface{}{1, "abc"}, []interface{}{1, "cba"}, map[int]bool{0: false, 1: true}), IsNil)
 
 	txn, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
@@ -110,18 +108,17 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	vals, err := tb.RowWithCols(txn, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
-	c.Assert(vals[0], Equals, int64(1))
+	c.Assert(vals[0], Equals, 1)
 	cols := []*column.Col{tb.Cols()[1]}
 	vals, err = tb.RowWithCols(txn, rid, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
-	c.Assert(vals[0], DeepEquals, []byte("cba"))
+	c.Assert(vals[0], Equals, "abc")
 
 	c.Assert(tb.RemoveRecord(ctx, rid, []interface{}{1, "cba"}), IsNil)
 	_, err = tb.AddRecord(ctx, []interface{}{1, "abc"})
 	c.Assert(err, IsNil)
 	c.Assert(tb.Truncate(txn), IsNil)
-
 	row, err = tb.Row(ctx, rid)
 	c.Assert(err, NotNil)
 }

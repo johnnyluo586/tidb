@@ -143,10 +143,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(col, NotNil)
 
-	col, ok = is.ColumnByID(5)
-	c.Assert(ok, IsFalse)
-	c.Assert(col, IsNil)
-
 	col, ok = is.ColumnByName(dbName, tbName, colName)
 	c.Assert(ok, IsTrue)
 	c.Assert(col, NotNil)
