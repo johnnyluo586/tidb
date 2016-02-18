@@ -111,6 +111,10 @@ func newTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	return t
 }
 
+func (t *Table) GetTxn(ctx context.Context, forceNew bool) (kv.Transaction, error) {
+	return ctx.GetTxn(forceNew)
+}
+
 // TableID implements table.Table TableID interface.
 func (t *Table) TableID() int64 {
 	return t.ID

@@ -79,6 +79,10 @@ func newMemoryTable(tableID int64, tableName string, cols []*column.Col, alloc a
 	return t
 }
 
+func (t *MemoryTable) GetTxn(ctx context.Context, forceNew bool) (kv.Transaction, error) {
+	return t.store.Begin()
+}
+
 // TableID implements table.Table TableID interface.
 func (t *MemoryTable) TableID() int64 {
 	return t.ID
@@ -328,7 +332,9 @@ func (t *MemoryTable) AddRecord(ctx context.Context, r []interface{}) (recordID 
 	if err = bs.SaveTo(txn); err != nil {
 		return 0, errors.Trace(err)
 	}
-	variable.GetSessionVars(ctx).AddAffectedRows(1)
+	if ctx != nil {
+		variable.GetSessionVars(ctx).AddAffectedRows(1)
+	}
 	txn.Commit()
 	return recordID, nil
 }
@@ -362,7 +368,6 @@ func (t *MemoryTable) RowWithCols(retriever kv.Retriever, h int64, cols []*colum
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
 		val, err := t.DecodeValue(data, col)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -461,6 +466,8 @@ func (t *MemoryTable) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []i
 // IterRecords implements table.Table IterRecords interface.
 func (t *MemoryTable) IterRecords(retriever kv.Retriever, startKey kv.Key, cols []*column.Col,
 	fn table.RecordIterFunc) error {
+	var err error
+	retriever, err = store.Begin()
 	it, err := retriever.Seek(startKey)
 	if err != nil {
 		return errors.Trace(err)

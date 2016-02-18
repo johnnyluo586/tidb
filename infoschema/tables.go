@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -321,8 +320,6 @@ func metaForFiles() *model.TableInfo {
 	}
 }
 
-// Prepare table data.
-
 func dataForSchemata(schemas []string) [][]interface{} {
 	sort.Strings(schemas)
 	rows := [][]interface{}{}
@@ -476,12 +473,12 @@ func fetchStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]in
 		}
 		for i, key := range index.Columns {
 			//col, _ := is.ColumnByName(schema.Name, table.Name, key.Name)
-			var col *model.ColumnInfo
+			//var col *model.ColumnInfo
 			// TODO: this above code
 			nullable := "YES"
-			if mysql.HasNotNullFlag(col.Flag) {
-				nullable = ""
-			}
+			//if mysql.HasNotNullFlag(col.Flag) {
+			//	nullable = ""
+			//}
 			record := []interface{}{
 				catalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
@@ -506,22 +503,7 @@ func fetchStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]in
 	return rows
 }
 
-var alloc autoid.Allocator
-
-func initTable(meta *model.TableInfo, data [][]interface{}) (table.Table, error) {
+func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {
 	tbl, _ := tables.MemoryTableFromMeta(alloc, meta)
-	for _, r := range data {
-		_, err := tbl.AddRecord(nil, r)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
 	return tbl, nil
-}
-
-func init() {
-	// build data
-	dbID := int64(0)
-	alloc = autoid.NewMemoryAllocator(dbID)
-	// initTable For each data
 }

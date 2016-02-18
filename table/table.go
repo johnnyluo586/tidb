@@ -108,6 +108,9 @@ type Table interface {
 
 	// LockRow locks a row.
 	LockRow(ctx context.Context, h int64) error
+
+	// GetTxn get a txn
+	GetTxn(ctx context.Context, forceNew bool) (kv.Transaction, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

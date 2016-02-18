@@ -253,7 +253,8 @@ func (e *TableScanExec) Next() (*Row, error) {
 
 func (e *TableScanExec) seek() (kv.Key, error) {
 	seekKey := tables.EncodeRecordKey(e.t.TableID(), e.seekHandle, 0)
-	txn, err := e.ctx.GetTxn(false)
+	//txn, err := e.ctx.GetTxn(false)
+	txn, err := e.t.GetTxn(e.ctx, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
