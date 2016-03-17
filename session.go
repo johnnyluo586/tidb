@@ -28,21 +28,20 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -52,16 +51,16 @@ import (
 
 // Session context
 type Session interface {
-	Status() uint16                               // Flag of current status, such as autocommit
-	LastInsertID() uint64                         // Last inserted auto_increment id
-	AffectedRows() uint64                         // Affected rows by lastest executed stmt
-	Execute(sql string) ([]rset.Recordset, error) // Execute a sql statement
-	String() string                               // For debug
+	Status() uint16                              // Flag of current status, such as autocommit
+	LastInsertID() uint64                        // Last inserted auto_increment id
+	AffectedRows() uint64                        // Affected rows by lastest executed stmt
+	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement
+	String() string                              // For debug
 	FinishTxn(rollback bool) error
 	// For execute prepare statement in binary protocol
-	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error)
+	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// Execute a prepared statement
-	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (rset.Recordset, error)
+	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (ast.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags
 	SetConnectionID(uint64)
@@ -78,7 +77,7 @@ var (
 
 type stmtRecord struct {
 	stmtID uint32
-	st     stmt.Statement
+	st     ast.Statement
 	params []interface{}
 }
 
@@ -86,7 +85,7 @@ type stmtHistory struct {
 	history []*stmtRecord
 }
 
-func (h *stmtHistory) add(stmtID uint32, st stmt.Statement, params ...interface{}) {
+func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}) {
 	s := &stmtRecord{
 		stmtID: stmtID,
 		st:     st,
@@ -122,6 +121,9 @@ type session struct {
 	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
+
+	// For performance_schema only.
+	stmtState *perfschema.StatementState
 }
 
 func (s *session) Status() uint16 {
@@ -248,22 +250,25 @@ func (s *session) Retry() error {
 
 // ExecRestrictedSQL implements SQLHelper interface.
 // This is used for executing some restricted sql statements.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
 	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
 		// We do not support run this function concurrently.
 		// TODO: Maybe we should remove this restriction latter.
 		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
 	}
-	statements, err := Compile(ctx, sql)
+	rawStmts, err := Parse(ctx, sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rawStmts) != 1 {
+		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
+		return nil, errors.New("Wrong number of statement.")
+	}
+	st, err := Compile(s, rawStmts[0])
 	if err != nil {
 		log.Errorf("Compile %s with error: %v", sql, err)
 		return nil, errors.Trace(err)
 	}
-	if len(statements) != 1 {
-		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
-		return nil, errors.New("Wrong number of statement.")
-	}
-	st := statements[0]
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
@@ -290,7 +295,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	if row == nil {
 		return "", terror.ExecResultIsEmpty
 	}
-	value, err := types.ToString(row.Data[0])
+	value, err := types.ToString(row.Data[0].GetValue())
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -363,18 +368,23 @@ func (s *session) ShouldAutocommit(ctx context.Context) bool {
 	return false
 }
 
-func (s *session) Execute(sql string) ([]rset.Recordset, error) {
-	statements, err := Compile(s, sql)
+func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
+	rawStmts, err := Parse(s, sql)
 	if err != nil {
-		log.Errorf("Syntax error: %s", sql)
-		log.Errorf("Error occurs at %s.", err)
 		return nil, errors.Trace(err)
 	}
-
-	var rs []rset.Recordset
-
-	for _, st := range statements {
+	var rs []ast.RecordSet
+	for i, rst := range rawStmts {
+		st, err1 := Compile(s, rst)
+		if err1 != nil {
+			log.Errorf("Syntax error: %s", sql)
+			log.Errorf("Error occurs at %s.", err1)
+			return nil, errors.Trace(err1)
+		}
+		id := variable.GetSessionVars(s).ConnectionID
+		s.stmtState = perfschema.PerfHandle.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
 		r, err := runStmt(s, st)
+		perfschema.PerfHandle.EndStatement(s.stmtState)
 		if err != nil {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
@@ -387,7 +397,7 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 }
 
 // For execute prepare statement in binary protocol
-func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error) {
+func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	prepareExec := &executor.PrepareExec{
 		IS:      sessionctx.GetDomain(s).InfoSchema(),
 		Ctx:     s,
@@ -444,7 +454,7 @@ func checkArgs(args ...interface{}) error {
 }
 
 // Execute a prepared statement
-func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.Recordset, error) {
+func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
 	err := checkArgs(args...)
 	if err != nil {
 		return nil, err

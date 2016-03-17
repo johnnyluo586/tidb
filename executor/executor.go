@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -70,7 +70,7 @@ const (
 // Row represents a record row.
 type Row struct {
 	// Data is the output record data for current Plan.
-	Data []interface{}
+	Data []types.Datum
 
 	RowKeys []*RowKeyEntry
 }
@@ -140,16 +140,16 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	}
 
 	row := &Row{}
-	row.Data = []interface{}{
+	row.Data = types.MakeDatums(
 		ddlInfo.SchemaVer,
 		ddlOwner,
 		ddlJob,
 		bgInfo.SchemaVer,
 		bgOwner,
 		bgJob,
-	}
+	)
 	for i, f := range e.fields {
-		f.Expr.SetValue(row.Data[i])
+		f.Expr.SetValue(row.Data[i].GetValue())
 	}
 	e.done = true
 
@@ -293,7 +293,7 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	}
 	// Set result fields value.
 	for i, v := range e.fields {
-		v.Expr.SetValue(row.Data[i])
+		v.Expr.SetValue(row.Data[i].GetValue())
 	}
 
 	// Put rowKey to the tail of record row
@@ -320,9 +320,9 @@ type IndexRangeExec struct {
 
 	// seekVal is different from lowVal, it is casted from lowVal and
 	// must be less than or equal to lowVal, used to seek the index.
-	lowVals     []interface{}
+	lowVals     []types.Datum
 	lowExclude  bool
-	highVals    []interface{}
+	highVals    []types.Datum
 	highExclude bool
 
 	iter       kv.IndexIterator
@@ -338,13 +338,13 @@ func (e *IndexRangeExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *IndexRangeExec) Next() (*Row, error) {
 	if e.iter == nil {
-		seekVals := make([]interface{}, len(e.scan.idx.Columns))
+		seekVals := make([]types.Datum, len(e.scan.idx.Columns))
 		for i := 0; i < len(e.lowVals); i++ {
-			var err error
-			if e.lowVals[i] == plan.MinNotNullVal {
-				seekVals[i] = []byte{}
+			if e.lowVals[i].Kind() == types.KindMinNotNull {
+				seekVals[i].SetBytes([]byte{})
 			} else {
-				seekVals[i], err = types.Convert(e.lowVals[i], e.scan.valueTypes[i])
+				val, err := e.lowVals[i].ConvertTo(e.scan.valueTypes[i])
+				seekVals[i] = val
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -399,9 +399,9 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 
 // indexCompare compares multi column index.
 // The length of boundVals may be less than idxKey.
-func indexCompare(idxKey []interface{}, boundVals []interface{}) (int, error) {
+func indexCompare(idxKey []types.Datum, boundVals []types.Datum) (int, error) {
 	for i := 0; i < len(boundVals); i++ {
-		cmp, err := indexColumnCompare(idxKey[i], boundVals[i])
+		cmp, err := idxKey[i].CompareDatum(boundVals[i])
 		if err != nil {
 			return -1, errors.Trace(err)
 		}
@@ -410,41 +410,6 @@ func indexCompare(idxKey []interface{}, boundVals []interface{}) (int, error) {
 		}
 	}
 	return 0, nil
-}
-
-// comparison function that takes minNotNullVal and maxVal into account.
-func indexColumnCompare(a interface{}, b interface{}) (int, error) {
-	if a == nil && b == nil {
-		return 0, nil
-	} else if b == nil {
-		return 1, nil
-	} else if a == nil {
-		return -1, nil
-	}
-
-	// a and b both not nil
-	if a == plan.MinNotNullVal && b == plan.MinNotNullVal {
-		return 0, nil
-	} else if b == plan.MinNotNullVal {
-		return 1, nil
-	} else if a == plan.MinNotNullVal {
-		return -1, nil
-	}
-
-	// a and b both not min value
-	if a == plan.MaxVal && b == plan.MaxVal {
-		return 0, nil
-	} else if a == plan.MaxVal {
-		return 1, nil
-	} else if b == plan.MaxVal {
-		return -1, nil
-	}
-
-	n, err := types.Compare(a, b)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return n, nil
 }
 
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
@@ -500,7 +465,7 @@ func (e *IndexScanExec) Next() (*Row, error) {
 		}
 		if row != nil {
 			for i, val := range row.Data {
-				e.fields[i].Expr.SetValue(val)
+				e.fields[i].Expr.SetValue(val.GetValue())
 			}
 			return row, nil
 		}
@@ -724,14 +689,14 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 	e.executed = true
 	row := &Row{
 		RowKeys: rowKeys,
-		Data:    make([]interface{}, len(e.ResultFields)),
+		Data:    make([]types.Datum, len(e.ResultFields)),
 	}
 	for i, field := range e.ResultFields {
 		val, err := evaluator.Eval(e.ctx, field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row.Data[i] = val
+		row.Data[i] = types.NewDatum(val)
 	}
 	return row, nil
 }
@@ -1028,13 +993,13 @@ func (e *AggregateExec) getGroupKey() (string, error) {
 	if len(e.GroupByItems) == 0 {
 		return singleGroup, nil
 	}
-	vals := make([]interface{}, 0, len(e.GroupByItems))
+	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := evaluator.Eval(e.ctx, item.Expr)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		vals = append(vals, v)
+		vals = append(vals, types.NewDatum(v))
 	}
 	bs, err := codec.EncodeValue([]byte{}, vals...)
 	if err != nil {
@@ -1124,14 +1089,16 @@ func (e *UnionExec) Next() (*Row, error) {
 			for i := range row.Data {
 				// The column value should be casted as the same type of the first select statement in corresponding position
 				rf := e.fields[i]
-				row.Data[i], err = types.Convert(row.Data[i], &rf.Column.FieldType)
+				var val types.Datum
+				val, err = row.Data[i].ConvertTo(&rf.Column.FieldType)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
+				row.Data[i] = val
 			}
 		}
 		for i, v := range row.Data {
-			e.fields[i].Expr.SetValue(v)
+			e.fields[i].Expr.SetValue(v.GetValue())
 		}
 		return row, nil
 	}
@@ -1173,7 +1140,7 @@ func (e *DistinctExec) Next() (*Row, error) {
 		if row == nil {
 			return nil, nil
 		}
-		ok, err := e.checker.Check(row.Data)
+		ok, err := e.checker.Check(types.DatumsToInterfaces(row.Data))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

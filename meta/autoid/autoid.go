@@ -30,6 +30,7 @@ const (
 // Just keep id unique actually.
 type Allocator interface {
 	Alloc(tableID int64) (int64, error)
+	Rebase(tableID, newBase int64) error
 }
 
 type allocator struct {
@@ -38,6 +39,40 @@ type allocator struct {
 	end   int64
 	store kv.Storage
 	dbID  int64
+}
+
+// Rebase rebases the autoID base for table with tableID and the new base value.
+func (alloc *allocator) Rebase(tableID, newBase int64) error {
+	if tableID == 0 {
+		return errors.New("Invalid tableID")
+	}
+
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	if newBase <= alloc.base {
+		return nil
+	}
+	if newBase <= alloc.end {
+		alloc.base = newBase
+		return nil
+	}
+
+	return kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		end, err := m.GetAutoTableID(alloc.dbID, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newStep := newBase - end + step
+		end, err = m.GenAutoTableID(alloc.dbID, tableID, newStep)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		alloc.end = end
+		alloc.base = alloc.end - step
+		return nil
+	})
 }
 
 // Alloc allocs the next autoID for table with tableID.
@@ -72,10 +107,54 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	return alloc.base, nil
 }
 
+var (
+	memID     int64
+	memIDLock sync.Mutex
+)
+
+type memoryAllocator struct {
+	mu   sync.Mutex
+	base int64
+	end  int64
+	dbID int64
+}
+
+// Rebase rebases the autoID base for table with tableID and the new base value.
+func (alloc *memoryAllocator) Rebase(tableID, newBase int64) error {
+	// TODO: implement it.
+	return nil
+}
+
+// Alloc allocs the next autoID for table with tableID.
+// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
+func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
+	if tableID == 0 {
+		return 0, errors.New("Invalid tableID")
+	}
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	if alloc.base == alloc.end { // step
+		memIDLock.Lock()
+		memID = memID + step
+		alloc.end = memID
+		alloc.base = alloc.end - step
+		memIDLock.Unlock()
+	}
+	alloc.base++
+	return alloc.base, nil
+}
+
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID int64) Allocator {
 	return &allocator{
 		store: store,
 		dbID:  dbID,
+	}
+}
+
+// NewMemoryAllocator returns a new auto increment id generator in memory.
+func NewMemoryAllocator(dbID int64) Allocator {
+	return &memoryAllocator{
+		dbID: dbID,
 	}
 }

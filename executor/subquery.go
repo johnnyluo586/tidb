@@ -24,23 +24,24 @@ import (
 
 var _ ast.SubqueryExec = &subquery{}
 
-// SubQuery is an exprNode with a plan.
+// subquery is an exprNode with a plan.
 type subquery struct {
-	types.DataItem
+	types.Datum
+	Type *types.FieldType
 	flag uint64
 	text string
 	plan plan.Plan
 	is   infoschema.InfoSchema
 }
 
-// SetValue implements Expression interface.
-func (sq *subquery) SetValue(val interface{}) {
-	sq.Data = val
+// SetDatum implements Expression interface.
+func (sq *subquery) SetDatum(datum types.Datum) {
+	sq.Datum = datum
 }
 
-// GetValue implements Expression interface.
-func (sq *subquery) GetValue() interface{} {
-	return sq.Data
+// GetDatum implements Expression interface.
+func (sq *subquery) GetDatum() *types.Datum {
+	return &sq.Datum
 }
 
 // SetFlag implements Expression interface.
@@ -117,9 +118,9 @@ func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]interface{}, 
 			break
 		}
 		if len(row.Data) == 1 {
-			rows = append(rows, row.Data[0])
+			rows = append(rows, row.Data[0].GetValue())
 		} else {
-			rows = append(rows, row.Data)
+			rows = append(rows, types.DatumsToInterfaces(row.Data))
 		}
 		if rowCount > 0 {
 			rowCount--

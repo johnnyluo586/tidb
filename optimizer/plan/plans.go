@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // TableRange represents a range of row handle.
@@ -32,6 +33,9 @@ type TableScan struct {
 	Table  *model.TableInfo
 	Desc   bool
 	Ranges []TableRange
+
+	// RefAccess indicates it references a previous joined table, used in explain.
+	RefAccess bool
 
 	// AccessConditions can be used to build index range.
 	AccessConditions []ast.ExprNode
@@ -71,29 +75,11 @@ func (p *CheckTable) Accept(v Visitor) (Plan, bool) {
 
 }
 
-type bound int
-
-// Bound values.
-const (
-	MinNotNullVal bound = 0
-	MaxVal        bound = 1
-)
-
-// String implements fmt.Stringer interface.
-func (b bound) String() string {
-	if b == MinNotNullVal {
-		return "-inf"
-	} else if b == MaxVal {
-		return "+inf"
-	}
-	return ""
-}
-
 // IndexRange represents an index range to be scanned.
 type IndexRange struct {
-	LowVal      []interface{}
+	LowVal      []types.Datum
 	LowExclude  bool
-	HighVal     []interface{}
+	HighVal     []types.Datum
 	HighExclude bool
 }
 
@@ -103,7 +89,16 @@ func (ir *IndexRange) IsPoint() bool {
 		return false
 	}
 	for i := range ir.LowVal {
-		if ir.LowVal[i] != ir.HighVal[i] {
+		a := ir.LowVal[i]
+		b := ir.HighVal[i]
+		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
+			return false
+		}
+		cmp, err := a.CompareDatum(b)
+		if err != nil {
+			return false
+		}
+		if cmp != 0 {
 			return false
 		}
 	}
@@ -125,6 +120,9 @@ type IndexScan struct {
 
 	// Desc indicates whether the index should be scanned in descending order.
 	Desc bool
+
+	// RefAccess indicates it references a previous joined table, used in explain.
+	RefAccess bool
 
 	// AccessConditions can be used to build index range.
 	AccessConditions []ast.ExprNode
@@ -658,5 +656,22 @@ func (p *DDL) Accept(v Visitor) (Plan, bool) {
 		return v.Leave(np)
 	}
 	p = np.(*DDL)
+	return v.Leave(p)
+}
+
+// Explain represents a explain plan.
+type Explain struct {
+	basePlan
+
+	StmtPlan Plan
+}
+
+// Accept implements Plan Accept interface.
+func (p *Explain) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Explain)
 	return v.Leave(p)
 }

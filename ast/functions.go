@@ -28,13 +28,6 @@ var (
 	_ FuncNode = &AggregateFuncExpr{}
 	_ FuncNode = &FuncCallExpr{}
 	_ FuncNode = &FuncCastExpr{}
-	_ FuncNode = &FuncConvertExpr{}
-	_ FuncNode = &FuncDateArithExpr{}
-	_ FuncNode = &FuncExtractExpr{}
-	_ FuncNode = &FuncLocateExpr{}
-	_ FuncNode = &FuncSubstringExpr{}
-	_ FuncNode = &FuncSubstringIndexExpr{}
-	_ FuncNode = &FuncTrimExpr{}
 )
 
 // UnquoteString is not quoted when printed.
@@ -63,55 +56,6 @@ func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 		}
 		n.Args[i] = node.(ExprNode)
 	}
-	return v.Leave(n)
-}
-
-// FuncExtractExpr is for time extract function.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
-type FuncExtractExpr struct {
-	funcNode
-
-	Unit string
-	Date ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncExtractExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncExtractExpr)
-	node, ok := n.Date.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Date = node.(ExprNode)
-	return v.Leave(n)
-}
-
-// FuncConvertExpr provides a way to convert data between different character sets.
-// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-type FuncConvertExpr struct {
-	funcNode
-	// Expr is the expression to be converted.
-	Expr ExprNode
-	// Charset is the target character set to convert.
-	Charset string
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncConvertExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncConvertExpr)
-	node, ok := n.Expr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -152,115 +96,6 @@ func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// FuncSubstringExpr returns the substring as specified.
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring
-type FuncSubstringExpr struct {
-	funcNode
-
-	StrExpr ExprNode
-	Pos     ExprNode
-	Len     ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncSubstringExpr)
-	node, ok := n.StrExpr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.StrExpr = node.(ExprNode)
-	node, ok = n.Pos.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Pos = node.(ExprNode)
-	if n.Len != nil {
-		node, ok = n.Len.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Len = node.(ExprNode)
-	}
-	return v.Leave(n)
-}
-
-// FuncSubstringIndexExpr returns the substring as specified.
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
-type FuncSubstringIndexExpr struct {
-	funcNode
-
-	StrExpr ExprNode
-	Delim   ExprNode
-	Count   ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncSubstringIndexExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncSubstringIndexExpr)
-	node, ok := n.StrExpr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.StrExpr = node.(ExprNode)
-	node, ok = n.Delim.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Delim = node.(ExprNode)
-	node, ok = n.Count.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Count = node.(ExprNode)
-	return v.Leave(n)
-}
-
-// FuncLocateExpr returns the position of the first occurrence of substring.
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
-type FuncLocateExpr struct {
-	funcNode
-
-	Str    ExprNode
-	SubStr ExprNode
-	Pos    ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncLocateExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncLocateExpr)
-	node, ok := n.Str.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Str = node.(ExprNode)
-	node, ok = n.SubStr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.SubStr = node.(ExprNode)
-	if n.Pos != nil {
-		node, ok = n.Pos.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Pos = node.(ExprNode)
-	}
-	return v.Leave(n)
-}
-
 // TrimDirectionType is the type for trim direction.
 type TrimDirectionType int
 
@@ -274,38 +109,6 @@ const (
 	// TrimTrailing trims from right.
 	TrimTrailing
 )
-
-// FuncTrimExpr remove leading/trailing/both remstr.
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
-type FuncTrimExpr struct {
-	funcNode
-
-	Str       ExprNode
-	RemStr    ExprNode
-	Direction TrimDirectionType
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncTrimExpr)
-	node, ok := n.Str.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Str = node.(ExprNode)
-	if n.RemStr != nil {
-		node, ok = n.RemStr.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.RemStr = node.(ExprNode)
-	}
-	return v.Leave(n)
-}
 
 // DateArithType is type for DateArith type.
 type DateArithType byte
@@ -325,40 +128,6 @@ const (
 type DateArithInterval struct {
 	Unit     string
 	Interval ExprNode
-}
-
-// FuncDateArithExpr is the struct for date arithmetic functions.
-type FuncDateArithExpr struct {
-	funcNode
-
-	// Op is used for distinguishing date_add and date_sub.
-	Op   DateArithType
-	Date ExprNode
-	DateArithInterval
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncDateArithExpr)
-	if n.Date != nil {
-		node, ok := n.Date.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Date = node.(ExprNode)
-	}
-	if n.Interval != nil {
-		node, ok := n.Interval.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Interval = node.(ExprNode)
-	}
-	return v.Leave(n)
 }
 
 const (

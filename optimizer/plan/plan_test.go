@@ -318,9 +318,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		c.Assert(err, IsNil)
 
 		err = Refine(p)
-		explainStr, err := Explain(p)
-		c.Assert(err, IsNil)
-		c.Assert(explainStr, Equals, ca.best, Commentf("for %s cost %v", ca.sql, EstimateCost(p)))
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s cost %v", ca.sql, EstimateCost(p)))
 	}
 }
 
@@ -570,6 +568,16 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 				on t1.i1 = 1 and t1.c1 = t2.i2`,
 			"InnerJoin{Index(t1.i1)->OuterJoin{InnerJoin{Index(t2.i2)->Index(t3.i3)}->Index(t4.i4)}}->Fields",
 		},
+		{
+			`select * from
+				t1 join (
+					(t2 join t3
+						on t2.i2 = t3.i3
+					)
+				) on t1.i1 = t2.i2
+				where t1.i1 = 1`,
+			"InnerJoin{Index(t1.i1)->Index(t2.i2)->Index(t3.i3)}->Fields",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
@@ -580,9 +588,7 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 		ast.SetFlag(stmt)
 		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
-		expl, err := Explain(p)
-		c.Assert(err, IsNil)
-		c.Assert(expl, Equals, ca.explain, comment)
+		c.Assert(ToString(p), Equals, ca.explain, comment)
 	}
 }
 

@@ -73,7 +73,7 @@ func (e *ShowExec) Next() (*Row, error) {
 	}
 	row := e.rows[e.cursor]
 	for i, field := range e.fields {
-		field.Expr.SetValue(row.Data[i])
+		field.Expr.SetValue(row.Data[i].GetValue())
 	}
 	e.cursor++
 	return row, nil
@@ -117,7 +117,14 @@ func (e *ShowExec) fetchAll() error {
 
 func (e *ShowExec) fetchShowEngines() error {
 	row := &Row{
-		Data: []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"},
+		Data: types.MakeDatums(
+			"InnoDB",
+			"DEFAULT",
+			"Supports transactions, row-level locking, and foreign keys",
+			"YES",
+			"YES",
+			"YES",
+		),
 	}
 	e.rows = append(e.rows, row)
 	return nil
@@ -128,7 +135,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
 	for _, d := range dbs {
-		e.rows = append(e.rows, &Row{Data: []interface{}{d}})
+		e.rows = append(e.rows, &Row{Data: types.MakeDatums(d)})
 	}
 	return nil
 }
@@ -144,11 +151,11 @@ func (e *ShowExec) fetchShowTables() error {
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
-		data := []interface{}{v}
+		data := types.MakeDatums(v)
 		if e.Full {
 			// TODO: support "VIEW" later if we have supported view feature.
 			// now, just use "BASE TABLE".
-			data = append(data, "BASE TABLE")
+			data = append(data, types.NewDatum("BASE TABLE"))
 		}
 		e.rows = append(e.rows, &Row{Data: data})
 	}
@@ -169,12 +176,8 @@ func (e *ShowExec) fetchShowTableStatus() error {
 
 	for _, v := range tableNames {
 		now := mysql.CurrentTime(mysql.TypeDatetime)
-		data := []interface{}{
-			v, "InnoDB", "10", "Compact", 100, 100,
-			100, 100, 100, 100, 100,
-			now, now, now, "utf8_general_ci", "",
-			"", "",
-		}
+		data := types.MakeDatums(v, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
+			now, now, now, "utf8_general_ci", "", "", "")
 		e.rows = append(e.rows, &Row{Data: data})
 	}
 	return nil
@@ -197,7 +200,7 @@ func (e *ShowExec) fetchShowColumns() error {
 		// as well as the privileges you have for each column.
 		row := &Row{}
 		if e.Full {
-			row.Data = []interface{}{
+			row.Data = types.MakeDatums(
 				desc.Field,
 				desc.Type,
 				desc.Collation,
@@ -207,16 +210,16 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Extra,
 				desc.Privileges,
 				desc.Comment,
-			}
+			)
 		} else {
-			row.Data = []interface{}{
+			row.Data = types.MakeDatums(
 				desc.Field,
 				desc.Type,
 				desc.Null,
 				desc.Key,
 				desc.DefaultValue,
 				desc.Extra,
-			}
+			)
 		}
 		e.rows = append(e.rows, row)
 	}
@@ -238,11 +241,11 @@ func (e *ShowExec) fetchShowIndex() error {
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
-			data := []interface{}{
+			data := types.MakeDatums(
 				tb.Meta().Name.O, // Table
 				nonUniq,          // Non_unique
 				idx.Name.O,       // Key_name
-				i + 1,            // Seq_in_index
+				i+1,              // Seq_in_index
 				col.Name.O,       // Column_name
 				"utf8_bin",       // Colation
 				0,                // Cardinality
@@ -252,7 +255,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				"BTREE",          // Index_type
 				"",               // Comment
 				"",               // Index_comment
-			}
+			)
 			e.rows = append(e.rows, &Row{Data: data})
 		}
 	}
@@ -264,7 +267,12 @@ func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
 	for _, desc := range descs {
 		row := &Row{
-			Data: []interface{}{desc.Name, desc.Desc, desc.DefaultCollation, desc.Maxlen},
+			Data: types.MakeDatums(
+				desc.Name,
+				desc.Desc,
+				desc.DefaultCollation,
+				desc.Maxlen,
+			),
 		}
 		e.rows = append(e.rows, row)
 	}
@@ -295,7 +303,7 @@ func (e *ShowExec) fetchShowVariables() error {
 				return errors.Trace(err)
 			}
 		}
-		row := &Row{Data: []interface{}{v.Name, value}}
+		row := &Row{Data: types.MakeDatums(v.Name, value)}
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -314,7 +322,7 @@ func (e *ShowExec) fetchShowStatus() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row := &Row{Data: []interface{}{status, value}}
+		row := &Row{Data: types.MakeDatums(status, value)}
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -386,10 +394,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(" DEFAULT CHARSET=latin1")
 	}
 
-	data := []interface{}{
-		tb.Meta().Name.O,
-		buf.String(),
-	}
+	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
 	e.rows = append(e.rows, &Row{Data: data})
 	return nil
 }
@@ -401,7 +406,14 @@ func (e *ShowExec) fetchShowCollation() error {
 		if v.IsDefault {
 			isDefault = "Yes"
 		}
-		row := &Row{Data: []interface{}{v.Name, v.CharsetName, v.ID, isDefault, "Yes", 1}}
+		row := &Row{Data: types.MakeDatums(
+			v.Name,
+			v.CharsetName,
+			v.ID,
+			isDefault,
+			"Yes",
+			1,
+		)}
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -418,7 +430,7 @@ func (e *ShowExec) fetchShowGrants() error {
 		return errors.Trace(err)
 	}
 	for _, g := range gs {
-		data := []interface{}{g}
+		data := types.MakeDatums(g)
 		e.rows = append(e.rows, &Row{Data: data})
 	}
 	return nil

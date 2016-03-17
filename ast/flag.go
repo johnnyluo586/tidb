@@ -66,20 +66,6 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 		f.funcCall(x)
 	case *FuncCastExpr:
 		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
-	case *FuncConvertExpr:
-		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
-	case *FuncDateArithExpr:
-		f.funcDateArith(x)
-	case *FuncExtractExpr:
-		x.SetFlag(FlagHasFunc | x.Date.GetFlag())
-	case *FuncLocateExpr:
-		f.funcLocate(x)
-	case *FuncSubstringExpr:
-		f.funcSubstring(x)
-	case *FuncSubstringIndexExpr:
-		f.funcSubstringIndex(x)
-	case *FuncTrimExpr:
-		f.funcTrim(x)
 	case *IsNullExpr:
 		x.SetFlag(x.Expr.GetFlag())
 	case *IsTruthExpr:
@@ -166,52 +152,6 @@ func (f *flagSetter) funcCall(x *FuncCallExpr) {
 	flag := FlagHasFunc
 	for _, val := range x.Args {
 		flag |= val.GetFlag()
-	}
-	x.SetFlag(flag)
-}
-
-func (f *flagSetter) funcSubstring(x *FuncSubstringExpr) {
-	flag := FlagHasFunc | x.StrExpr.GetFlag() | x.Pos.GetFlag()
-	if x.Len != nil {
-		flag |= x.Len.GetFlag()
-	}
-	x.SetFlag(flag)
-}
-
-func (f *flagSetter) funcSubstringIndex(x *FuncSubstringIndexExpr) {
-	flag := FlagHasFunc | x.StrExpr.GetFlag()
-	if x.Delim != nil {
-		flag |= x.Delim.GetFlag()
-	}
-	if x.Count != nil {
-		flag |= x.Count.GetFlag()
-	}
-	x.SetFlag(flag)
-}
-
-func (f *flagSetter) funcLocate(x *FuncLocateExpr) {
-	flag := FlagHasFunc | x.Str.GetFlag()
-	if x.SubStr != nil {
-		flag |= x.SubStr.GetFlag()
-	}
-	if x.Pos != nil {
-		flag |= x.Pos.GetFlag()
-	}
-	x.SetFlag(flag)
-}
-
-func (f *flagSetter) funcTrim(x *FuncTrimExpr) {
-	flag := FlagHasFunc | x.Str.GetFlag()
-	if x.RemStr != nil {
-		flag |= x.RemStr.GetFlag()
-	}
-	x.SetFlag(flag)
-}
-
-func (f *flagSetter) funcDateArith(x *FuncDateArithExpr) {
-	flag := FlagHasFunc | x.Date.GetFlag()
-	if x.Interval != nil {
-		flag |= x.Interval.GetFlag()
 	}
 	x.SetFlag(flag)
 }

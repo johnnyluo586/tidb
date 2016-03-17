@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // DDLInfo is for DDL information.
@@ -89,20 +90,20 @@ func GetBgDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-func nextIndexVals(data []interface{}) []interface{} {
+func nextIndexVals(data []types.Datum) []types.Datum {
 	// Add 0x0 to the end of data.
-	return append(data, nil)
+	return append(data, types.Datum{})
 }
 
 // RecordData is the record data composed of a handle and values.
 type RecordData struct {
 	Handle int64
-	Values []interface{}
+	Values []types.Datum
 }
 
 // GetIndexRecordsCount returns the total number of the index records from startVals.
 // If startVals = nil, returns the total number of the index records.
-func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}) (int64, error) {
+func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []types.Datum) (int64, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -127,8 +128,8 @@ func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []inte
 // It returns data and the next startVals until it doesn't have data, then returns data is nil and
 // the next startVals is the values which can't get data. If startVals = nil and limit = -1,
 // it returns the index data of the whole.
-func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}, limit int64) (
-	[]*RecordData, []interface{}, error) {
+func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []types.Datum, limit int64) (
+	[]*RecordData, []types.Datum, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -136,7 +137,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 	defer it.Close()
 
 	var idxRows []*RecordData
-	var curVals []interface{}
+	var curVals []types.Datum
 	for limit != 0 {
 		val, h, err1 := it.Next()
 		if terror.ErrorEqual(err1, io.EOF) {
@@ -218,7 +219,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedC
 
 	startKey := t.RecordKey(0, nil)
 	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
-	filterFunc := func(h1 int64, vals1 []interface{}, cols []*column.Col) (bool, error) {
+	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*column.Col) (bool, error) {
 		isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
 		if terror.ErrorEqual(err, kv.ErrKeyExists) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
@@ -249,7 +250,7 @@ func scanTableData(retriever kv.Retriever, t table.Table, cols []*column.Col, st
 	var records []*RecordData
 
 	startKey := t.RecordKey(startHandle, nil)
-	filterFunc := func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
+	filterFunc := func(h int64, d []types.Datum, cols []*column.Col) (bool, error) {
 		if limit != 0 {
 			r := &RecordData{
 				Handle: h,
@@ -306,7 +307,7 @@ func ScanSnapshotTableRecord(store kv.Storage, ver kv.Version, t table.Table, st
 // It returns nil if data is equal to the data that scans from table, otherwise
 // it returns an error with a different set of records. If exact is false, only compares handle.
 func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
-	m := make(map[int64][]interface{}, len(data))
+	m := make(map[int64][]types.Datum, len(data))
 	for _, r := range data {
 		if _, ok := m[r.Handle]; ok {
 			return errors.Errorf("handle:%d is repeated in data", r.Handle)
@@ -315,7 +316,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 	}
 
 	startKey := t.RecordKey(0, nil)
-	filterFunc := func(h int64, vals []interface{}, cols []*column.Col) (bool, error) {
+	filterFunc := func(h int64, vals []types.Datum, cols []*column.Col) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
@@ -381,14 +382,14 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 	return cnt, nil
 }
 
-func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*column.Col) ([]interface{}, error) {
-	v := make([]interface{}, len(cols))
+func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*column.Col) ([]types.Datum, error) {
+	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
 		if col.State != model.StatePublic {
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.Meta()) {
-			v[i] = h
+			v[i].SetInt64(h)
 			continue
 		}
 

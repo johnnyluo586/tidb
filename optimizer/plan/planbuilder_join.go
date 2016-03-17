@@ -133,7 +133,7 @@ func newInnerJoinPath(leftPath, rightPath *joinPath, on *ast.OnCondition) *joinP
 	}
 	if len(rightPath.inners) != 0 {
 		innerJoin.inners = append(innerJoin.inners, rightPath.inners...)
-		innerJoin.conditions = append(innerJoin.conditions, leftPath.conditions...)
+		innerJoin.conditions = append(innerJoin.conditions, rightPath.conditions...)
 	} else {
 		innerJoin.inners = append(innerJoin.inners, rightPath)
 	}
@@ -757,7 +757,7 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 		ast.SetFlag(condition)
 		path.conditions = append(path.conditions, condition)
 	}
-	candidates := b.buildAllAccessMethodsPlan(path.table, path.conditions)
+	candidates := b.buildAllAccessMethodsPlan(path)
 	var p Plan
 	var lowestCost float64
 	for _, can := range candidates {
